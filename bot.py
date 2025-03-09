@@ -1,3 +1,4 @@
+
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types, F
@@ -13,9 +14,10 @@ ADMIN_ID = 1951089207  # O'zgartirish shart emas
 bot = Bot(token=TOKEN, parse_mode="HTML")
 dp = Dispatcher()
 
-# Foydalanuvchi tillari va xabar vaqtlari uchun lug‘atlar
+# Foydalanuvchi tillari va xabar vaqtlari uchun lug'atlar
 user_languages = {}
-user_last_message_time = {}
+user_messages = {}  # Foydalanuvchi xabarlarini saqlash uchun
+user_waiting_tasks = {}  # Kutish vazifalarini saqlash uchun
 
 # 🔹 Tilni tanlash tugmalari
 lang_kb = ReplyKeyboardMarkup(
@@ -53,31 +55,74 @@ async def set_language(message: types.Message):
 async def receive_message(message: types.Message):
     user_id = message.from_user.id
     lang = user_languages.get(user_id, "uz")
-    now = asyncio.get_event_loop().time()
+    
+    # Tilni tanlash menyusi xabarlariga javob bermang
+    if message.text in ["🇺🇿 O'zbekcha", "🇷🇺 Русский"]:
+        return
+    
+    # Xabarlarni saqlaymiz
+    if user_id in user_messages:
+        # Mavjud xabarlarga yangi xabar qo'shish
+        user_messages[user_id].append(message.text)
+        
+        # Foydalanuvchiga xabar qo'shilganligini bildirish
+        confirmation = "✓ Xabar qo'shildi" if lang == "uz" else "✓ Сообщение добавлено"
+        await message.answer(confirmation)
+    else:
+        # Yangi foydalanuvchi uchun xabarlar ro'yxati
+        user_messages[user_id] = [message.text]
+        
+        # Foydalanuvchiga bildirish
+        info_text = "✅ Xabaringiz qabul qilindi. 60 soniya davomida yana ma'lumot qo'shishingiz mumkin." if lang == "uz" else \
+                   "✅ Ваше сообщение принято. В течение 60 секунд вы можете добавить дополнительную информацию."
+        await message.answer(info_text)
+        
+        # Kutish vazifasini yaratish
+        if user_id in user_waiting_tasks:
+            user_waiting_tasks[user_id].cancel()
+        user_waiting_tasks[user_id] = asyncio.create_task(process_after_delay(user_id, message))
 
-    if user_id in user_last_message_time:
-        time_diff = now - user_last_message_time[user_id]
-        if time_diff < 60:
-            return  # 60 soniyadan oldin yana xabar kelsa, javob bermaydi
-
-    user_last_message_time[user_id] = now
-
-    # Adminga yuboriladigan xabar
-    admin_text = f"📩 Yangi xabar:\n👤 {message.from_user.full_name} ({message.from_user.id})\n📝 {message.text}"
-    await bot.send_message(ADMIN_ID, admin_text)
-
-    # Foydalanuvchiga javob
-    response_text = "✅ Sizning shikoyatingiz qabul qilindi. Iltimos, biroz kuting.\n📲 @ganiev_s7 ni kontaktingizga saqlang va kontaktingizni yuboring." if lang == "uz" else \
-                    "✅ Ваша жалоба принята. Пожалуйста, подождите немного.\n📲 Сохраните @ganiev_s7 и отправьте ваш контакт."
-
-    await message.answer(response_text)
+# Xabarlarni yuborish (60 soniyadan keyin)
+async def process_after_delay(user_id, message):
+    try:
+        # 60 soniya kutish
+        await asyncio.sleep(60)
+        
+        # Foydalanuvchi xabarlarini olish
+        messages = user_messages.get(user_id, [])
+        if not messages:
+            return
+            
+        # Barcha xabarlarni bir xabar ichiga birlashtirish
+        full_text = "\n\n".join(messages)
+        lang = user_languages.get(user_id, "uz")
+        
+        # Adminga yuborish
+        admin_text = f"📩 Yangi xabar:\n👤 {message.from_user.full_name} ({message.from_user.id})\n📝 {full_text}"
+        await bot.send_message(ADMIN_ID, admin_text)
+        
+        # Foydalanuvchiga javob
+        response_text = "✅ Sizning xabaringiz qabul qilindi. Iltimos, biroz kuting.\n📲 @ganiev_s7 ni kontaktingizga saqlang va kontaktingizni yuboring." if lang == "uz" else \
+                        "✅ Ваше сообщение принято. Пожалуйста, подождите немного.\n📲 Сохраните @ganiev_s7 и отправьте ваш контакт."
+        
+        await bot.send_message(user_id, response_text)
+        
+        # Ma'lumotlarni tozalash
+        if user_id in user_messages:
+            del user_messages[user_id]
+    except Exception as e:
+        logging.error(f"Error in processing messages: {e}")
+    finally:
+        # Har qanday holatda vazifani tozalash
+        if user_id in user_waiting_tasks:
+            del user_waiting_tasks[user_id]
 
 # 🔹 Kontakt yuborish qabul qilish
-@dp.message(F.contact.is_)
+@dp.message(F.contact)
 async def receive_contact(message: types.Message):
     user_id = message.from_user.id
     lang = user_languages.get(user_id, "uz")
-    contact_info = f"📞 Yangi kontakt:\n{message.contact.phone_number}\n👤 {message.from_user.full_name}"
+    contact_info = f"📞 Yangi kontakt:\n{message.contact.phone_number}\n👤 {message.from_user.full_name} ({message.from_user.id})"
 
     # Adminga yuborish
     await bot.send_message(ADMIN_ID, contact_info)
@@ -91,6 +136,7 @@ async def receive_contact(message: types.Message):
 # Botni ishga tushirish
 async def main():
     logging.basicConfig(level=logging.INFO)
+    logging.info("Bot started")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
