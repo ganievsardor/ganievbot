@@ -1,121 +1,97 @@
 import asyncio
 import logging
-import time
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command, Text
-from aiogram.types import (
-    Message, CallbackQuery,
-    InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardMarkup, KeyboardButton
-)
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.filters import Command
+from aiogram.utils.markdown import hbold
 
-# Bot tokeni va admin ID (integer) ni sozlang:
+# Token va admin ID
 TOKEN = "6367097370:AAHjerMmugPyfJS19n-8TgFVe8ym0fUzA54"
-ADMIN_ID = 1951089207
+ADMIN_ID = 1951089207  # O'zgartirish shart emas
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+# Bot va dispatcher yaratish
+bot = Bot(token=TOKEN, parse_mode="HTML")
+dp = Dispatcher()
 
-# Global lug'at: foydalanuvchi ID -> { 'start_time': timestamp, 'complaints': [matnlar], 'task': asyncio.Task }
-pending_complaints = {}
+# Foydalanuvchi tillari va xabar vaqtlari uchun lug‘atlar
+user_languages = {}
+user_last_message_time = {}
 
-# /start buyrug‘i: Til tanlovi inline tugmalari bilan
+# 🔹 Tilni tanlash tugmalari
+lang_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🇺🇿 O'zbekcha"), KeyboardButton(text="🇷🇺 Русский")]
+    ],
+    resize_keyboard=True
+)
+
+# 🔹 Kontakt yuborish tugmasi
+contact_kb = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="📞 Kontaktni yuborish", request_contact=True)]],
+    resize_keyboard=True,
+    one_time_keyboard=True
+)
+
+# `/start` komandasiga javob
 @dp.message(Command("start"))
-async def start_command(message: Message):
-    lang_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="O'zbekcha", callback_data="lang_uz")],
-        [InlineKeyboardButton(text="Русский", callback_data="lang_ru")]
-    ])
-    await message.answer("Assalomu alaykum! Iltimos, tilni tanlang:", reply_markup=lang_keyboard)
+async def start_cmd(message: types.Message):
+    await message.answer("🇺🇿 Tilni tanlang / 🇷🇺 Выберите язык:", reply_markup=lang_kb)
 
-# Til tanlovi handler
-@dp.callback_query(Text(startswith="lang_"))
-async def language_selection(callback: CallbackQuery):
-    lang = callback.data.split("_")[1]
-    if lang == "uz":
-        response = "O'zbekcha tanlandi. Agar talab va takliflaringiz bo'lsa, quyidagi tugmani bosing."
-    elif lang == "ru":
-        response = "Вы выбрали русский язык. Если у вас есть предложения или жалобы, нажмите кнопку ниже."
-    complaint_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Talab va Takliflaringiz", callback_data="complaint")]
-    ])
-    await callback.message.answer(response, reply_markup=complaint_keyboard)
-    await callback.answer()
+# 🔹 Tilni tanlash tugmasi
+@dp.message(F.text.in_(["🇺🇿 O'zbekcha", "🇷🇺 Русский"]))
+async def set_language(message: types.Message):
+    user_languages[message.from_user.id] = "ru" if message.text == "🇷🇺 Русский" else "uz"
+    lang = user_languages[message.from_user.id]
 
-# "Talab va Takliflaringiz" tugmasi bosilganda – pending rejimga o‘tish
-@dp.callback_query(Text(equals="complaint"))
-async def complaint_button_handler(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    # Agar foydalanuvchi pending rejimda emas, yangi entry yaratiladi
-    if user_id not in pending_complaints:
-        pending_complaints[user_id] = {
-            'start_time': time.time(),
-            'complaints': [],
-            'task': asyncio.create_task(process_complaints(user_id, callback.message.chat.id))
-        }
-    await callback.message.answer("Iltimos, talab va takliflaringizni yozib qoldiring:")
-    await callback.answer()
-
-# Pending rejimda bo'lgan foydalanuvchilarning xabarlari shu handler orqali yig‘iladi
-@dp.message()
-async def handle_pending_complaint(message: Message):
-    user_id = message.from_user.id
-    if user_id in pending_complaints:
-        pending_complaints[user_id]['complaints'].append(message.text)
-        # Xabar qabul qilindi degan javob yuborilmasin – faqat yig‘ilsin
-        return
+    if lang == "ru":
+        await message.answer("✍️ Пожалуйста, напишите вашу жалобу или предложение:", reply_markup=contact_kb)
     else:
-        await message.answer("Noma'lum buyruq. Iltimos, /help buyrug'ini yuboring.")
+        await message.answer("✍️ Iltimos, shikoyatingiz yoki taklifingizni yozing:", reply_markup=contact_kb)
 
-# 60 soniya kutib, pending shikoyatlar yig‘ilib admin ga yuboriladi va foydalanuvchiga javob keladi
-async def process_complaints(user_id: int, chat_id: int):
-    await asyncio.sleep(60)  # 60 soniya kutish
-    data = pending_complaints.pop(user_id, None)
-    if data and data['complaints']:
-        combined_text = "\n---\n".join(data['complaints'])
-        try:
-            await bot.send_message(ADMIN_ID, f"Foydalanuvchi {user_id} shikoyatlari:\n{combined_text}")
-        except Exception as e:
-            logging.error(f"Forward qilishda xatolik: {e}")
-    confirmation_text = ("Sizning shikoyatingiz qabul qilindi. Iltimos, biroz kuting. "
-                         "@ganiev_s7 ni kontaktizga saqlang qilib yuboring va kontaktingizni yuboring.")
-    contact_button = KeyboardButton(text="Kontakt yuborish", request_contact=True)
-    reply_keyboard = ReplyKeyboardMarkup(keyboard=[[contact_button]], resize_keyboard=True, one_time_keyboard=True)
-    try:
-        await bot.send_message(chat_id, confirmation_text, reply_markup=reply_keyboard)
-    except Exception as e:
-        logging.error(f"Xatolik: {e}")
+# 🔹 Shikoyat yoki taklif qabul qilish
+@dp.message(F.text)
+async def receive_message(message: types.Message):
+    user_id = message.from_user.id
+    lang = user_languages.get(user_id, "uz")
+    now = asyncio.get_event_loop().time()
 
-# /help: Yordam buyrug‘i
-@dp.message(Command("help"))
-async def help_command(message: Message):
-    help_text = (
-        "/start - Botni boshlash va til tanlovi\n"
-        "/contact - Kontakt ma'lumotlari"
-    )
-    await message.answer(help_text)
+    if user_id in user_last_message_time:
+        time_diff = now - user_last_message_time[user_id]
+        if time_diff < 60:
+            return  # 60 soniyadan oldin yana xabar kelsa, javob bermaydi
 
-# /contact: Kontakt yuborish uchun reply keyboard
-@dp.message(Command("contact"))
-async def contact_command(message: Message):
-    contact_button = KeyboardButton(text="Kontakt yuborish", request_contact=True)
-    reply_keyboard = ReplyKeyboardMarkup(keyboard=[[contact_button]], resize_keyboard=True, one_time_keyboard=True)
-    await message.answer("Iltimos, kontakt raqamingizni yuboring:", reply_markup=reply_keyboard)
+    user_last_message_time[user_id] = now
 
-# Kontaktni qabul qilish
-@dp.message(content_types=types.ContentType.CONTACT)
-async def handle_contact(message: Message):
-    contact = message.contact.phone_number
-    await message.answer(f"Kontakt qabul qilindi: {contact}")
-    try:
-        await bot.send_message(ADMIN_ID, f"Foydalanuvchi {message.from_user.full_name} (ID: {message.from_user.id}) kontaktini yubordi: {contact}")
-    except Exception as e:
-        logging.error(f"Kontakt adminga yuborishda xatolik: {e}")
+    # Adminga yuboriladigan xabar
+    admin_text = f"📩 Yangi xabar:\n👤 {message.from_user.full_name} ({message.from_user.id})\n📝 {message.text}"
+    await bot.send_message(ADMIN_ID, admin_text)
 
+    # Foydalanuvchiga javob
+    response_text = "✅ Sizning shikoyatingiz qabul qilindi. Iltimos, biroz kuting.\n📲 @ganiev_s7 ni kontaktingizga saqlang va kontaktingizni yuboring." if lang == "uz" else \
+                    "✅ Ваша жалоба принята. Пожалуйста, подождите немного.\n📲 Сохраните @ganiev_s7 и отправьте ваш контакт."
+
+    await message.answer(response_text)
+
+# 🔹 Kontakt yuborish qabul qilish
+@dp.message(F.contact.is_)
+async def receive_contact(message: types.Message):
+    user_id = message.from_user.id
+    lang = user_languages.get(user_id, "uz")
+    contact_info = f"📞 Yangi kontakt:\n{message.contact.phone_number}\n👤 {message.from_user.full_name}"
+
+    # Adminga yuborish
+    await bot.send_message(ADMIN_ID, contact_info)
+
+    # Foydalanuvchiga javob va menyuni olib tashlash
+    response_text = "✅ Rahmat! Sizning kontaktingiz adminga yuborildi." if lang == "uz" else \
+                    "✅ Спасибо! Ваш контакт отправлен администратору."
+
+    await message.answer(response_text, reply_markup=ReplyKeyboardRemove())
+
+# Botni ishga tushirish
 async def main():
     logging.basicConfig(level=logging.INFO)
     await dp.start_polling(bot)
 
-if name == "__main__":
+if __name__ == "__main__":
     asyncio.run(main())
