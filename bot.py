@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import openai
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import (
@@ -7,20 +8,27 @@ from aiogram.types import (
     KeyboardButton, 
     ReplyKeyboardRemove
 )
+from aiogram.client.default import DefaultBotProperties
 
-TOKEN = "6367097370:AAHjerMmugPyfJS19n-8TgFVe8ym0fUzA54"
+# Tokenlar
+# SECURITY ISSUE: Tokens should be stored as environment variables
+TOKEN = "6367097370:AAHjerMmugPyfJS19n-8TgFVe8ym0fUzA54"  # Should use os.environ.get("BOT_TOKEN")
+# SECURITY ISSUE: This is an organization ID, not an API key
+OPENAI_API_KEY = "org-aCINbcM9pgBWpKKFfCoKgdSs"  # Should use os.environ.get("OPENAI_API_KEY")
 ADMIN_ID = 1951089207  # Admin chat ID
 
+# OpenAI sozlamalari
+openai.api_key = OPENAI_API_KEY
+
 # Bot yaratamiz
-bot = Bot(token=TOKEN, parse_mode="HTML")
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 
 # Dispatcher yaratamiz
 dp = Dispatcher()
 
-# Foydalanuvchi tillari va xabarlar uchun lug'atlar
+# Foydalanuvchi tillari va xabar vaqtlari uchun lug‘atlar
 user_languages = {}
-user_messages = {}  # Foydalanuvchi xabarlarini saqlash uchun
-user_waiting_tasks = {}  # Kutish vazifalarini saqlash uchun
+user_last_message_time = {}
 
 # Tilni tanlash tugmalari
 lang_kb = ReplyKeyboardMarkup(
@@ -30,7 +38,7 @@ lang_kb = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# Kontakt yuborish tugmalari
+# Kontakt yuborish tugmasi
 contact_kb_uz = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text="📞 Kontaktni yuborish", request_contact=True)]],
     resize_keyboard=True,
@@ -52,16 +60,14 @@ async def start_cmd(message: types.Message):
 
 @dp.message(F.text.in_(["🇺🇿 O'zbekcha", "🇷🇺 Русский"]))
 async def set_language(message: types.Message):
-    user_id = message.from_user.id
-
     if message.text == "🇷🇺 Русский":
-        user_languages[user_id] = "ru"
+        user_languages[message.from_user.id] = "ru"
         await message.answer(
             "✍️ Пожалуйста, напишите вашу жалобу или предложение:",
             reply_markup=contact_kb_ru
         )
     else:
-        user_languages[user_id] = "uz"
+        user_languages[message.from_user.id] = "uz"
         await message.answer(
             "✍️ Iltimos, shikoyatingiz yoki taklifingizni yozing:",
             reply_markup=contact_kb_uz
@@ -71,71 +77,36 @@ async def set_language(message: types.Message):
 async def receive_message(message: types.Message):
     user_id = message.from_user.id
     lang = user_languages.get(user_id, "uz")
+    now = asyncio.get_event_loop().time()
 
-    # Tilni tanlash menyusi xabarlariga javob bermang
-    if message.text in ["🇺🇿 O'zbekcha", "🇷🇺 Русский"]:
-        return
-
-    # Xabarlarni saqlaymiz
-    if user_id in user_messages:
-        # Mavjud xabarlarga yangi xabar qo'shish
-        user_messages[user_id].append(message.text)
-
-        # Foydalanuvchiga xabar qo'shilganligini bildirish
-        confirmation = "✓ Xabar qo'shildi" if lang == "uz" else "✓ Сообщение добавлено"
-        await message.answer(confirmation)
-    else:
-        # Yangi foydalanuvchi uchun xabarlar ro'yxati
-        user_messages[user_id] = [message.text]
-
-        # Foydalanuvchiga bildirish
-        info_text = "✅ Xabaringiz qabul qilindi. 60 soniya davomida yana ma'lumot qo'shishingiz mumkin." if lang == "uz" else \
-                   "✅ Ваше сообщение принято. В течение 60 секунд вы можете добавить дополнительную информацию."
-        await message.answer(info_text)
-
-        # Kutish vazifasini yaratish
-        if user_id in user_waiting_tasks:
-            user_waiting_tasks[user_id].cancel()
-        user_waiting_tasks[user_id] = asyncio.create_task(process_after_delay(user_id, message))
-
-# Xabarlarni yuborish (60 soniyadan keyin)
-async def process_after_delay(user_id, message):
-    try:
-        # 60 soniya kutish
-        await asyncio.sleep(60)
-
-        # Foydalanuvchi xabarlarini olish
-        messages = user_messages.get(user_id, [])
-        if not messages:
+    if user_id in user_last_message_time:
+        time_diff = now - user_last_message_time[user_id]
+        if time_diff < 60:
+            # ISSUE: Rate limited users should receive feedback
+            if lang == "ru":
+                await message.answer("⏳ Пожалуйста, подождите минуту перед отправкой нового сообщения.")
+            else:
+                await message.answer("⏳ Iltimos, yangi xabar yuborishdan oldin bir daqiqa kuting.")
             return
 
-        # Barcha xabarlarni bir xabar ichiga birlashtirish
-        full_text = "\n\n".join(messages)
-        lang = user_languages.get(user_id, "uz")
+    user_last_message_time[user_id] = now
 
-        # Adminga yuborish
-        admin_text = f"📩 Yangi xabar:\n👤 {message.from_user.full_name} ({message.from_user.id})\n📝 {full_text}"
-        await bot.send_message(ADMIN_ID, admin_text)
+    admin_text = (
+        f"📩 Yangi xabar:\n"
+        f"👤 {message.from_user.full_name} ({message.from_user.id})\n"
+        f"📝 {message.text}"
+    )
+    await bot.send_message(ADMIN_ID, admin_text)
 
-        # Foydalanuvchiga javob
-        if lang == "ru":
-            response_text = "✅ Ваше сообщение принято. Пожалуйста, подождите немного.\n📲 Сохраните @ganiev_s7 и отправьте ваш контакт."
-        else:
-            response_text = "✅ Sizning xabaringiz qabul qilindi. Iltimos, biroz kuting.\n📲 @ganiev_s7 ni kontaktingizga saqlang va kontaktingizni yuboring."
+    response_text = (
+        "✅ Ваша жалоба принята. Пожалуйста, подождите немного.\n"
+        "📲 Сохраните @ganiev_s7 и отправьте ваш контакт."
+    ) if lang == "ru" else (
+        "✅ Sizning shikoyatingiz qabul qilindi. Iltimos, biroz kuting.\n"
+        "📲 @ganiev_s7 ni kontaktingizga saqlang va kontaktingizni yuboring."
+    )
 
-        # Mos klaviatura tanlash
-        kb = contact_kb_ru if lang == "ru" else contact_kb_uz
-        await bot.send_message(user_id, response_text, reply_markup=kb)
-
-        # Ma'lumotlarni tozalash
-        if user_id in user_messages:
-            del user_messages[user_id]
-    except Exception as e:
-        logging.error(f"Error in processing messages: {e}")
-    finally:
-        # Har qanday holatda vazifani tozalash
-        if user_id in user_waiting_tasks:
-            del user_waiting_tasks[user_id]
+    await message.answer(response_text)
 
 @dp.message(F.contact)
 async def receive_contact(message: types.Message):
@@ -145,19 +116,29 @@ async def receive_contact(message: types.Message):
     contact_info = (
         f"📞 Yangi kontakt:\n"
         f"{message.contact.phone_number}\n"
-        f"👤 {message.from_user.full_name} ({message.from_user.id})"
+        f"👤 {message.from_user.full_name}"
     )
     await bot.send_message(ADMIN_ID, contact_info)
 
-    # Foydalanuvchiga javob va menyuni olib tashlash
-    response_text = "✅ Rahmat! Sizning kontaktingiz adminga yuborildi." if lang == "uz" else \
-                    "✅ Спасибо! Ваш контакт отправлен администратору."
-
+    response_text = "✅ Спасибо! Ваш контакт отправлен администратору." if lang == "ru" else "✅ Rahmat! Sizning kontaktingiz adminga yuborildi."
     await message.answer(response_text, reply_markup=ReplyKeyboardRemove())
+
+# ChatGPT bilan ishlovchi funksiya
+async def ask_chatgpt(prompt):
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response["choices"][0]["message"]["content"]
+
+@dp.message(F.text)
+async def chatgpt_response(message: types.Message):
+    user_message = message.text
+    chatgpt_reply = await ask_chatgpt(user_message)
+    await message.answer(chatgpt_reply)
 
 async def main():
     logging.basicConfig(level=logging.INFO)
-    logging.info("Bot started")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
