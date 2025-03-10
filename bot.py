@@ -2,24 +2,28 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import Command
-from aiogram.utils.markdown import hbold
+from aiogram.types import (
+    ReplyKeyboardMarkup, 
+    KeyboardButton, 
+    ReplyKeyboardRemove
+)
 
-# Token va admin ID
 TOKEN = "6367097370:AAHjerMmugPyfJS19n-8TgFVe8ym0fUzA54"
-ADMIN_ID = 1951089207  # O'zgartirish shart emas
+ADMIN_ID = 1951089207  # Admin chat ID
 
-# Bot va dispatcher yaratish
+# Bot yaratamiz
 bot = Bot(token=TOKEN, parse_mode="HTML")
+
+# Dispatcher yaratamiz
 dp = Dispatcher()
 
-# Foydalanuvchi tillari va xabar vaqtlari uchun lug'atlar
+# Foydalanuvchi tillari va xabarlar uchun lug'atlar
 user_languages = {}
 user_messages = {}  # Foydalanuvchi xabarlarini saqlash uchun
 user_waiting_tasks = {}  # Kutish vazifalarini saqlash uchun
 
-# 🔹 Tilni tanlash tugmalari
+# Tilni tanlash tugmalari
 lang_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🇺🇿 O'zbekcha"), KeyboardButton(text="🇷🇺 Русский")]
@@ -27,30 +31,43 @@ lang_kb = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# 🔹 Kontakt yuborish tugmasi
-contact_kb = ReplyKeyboardMarkup(
+# Kontakt yuborish tugmalari
+contact_kb_uz = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text="📞 Kontaktni yuborish", request_contact=True)]],
     resize_keyboard=True,
     one_time_keyboard=True
 )
 
-# `/start` komandasiga javob
+contact_kb_ru = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="📞 Отправить контакт", request_contact=True)]],
+    resize_keyboard=True,
+    one_time_keyboard=True
+)
+
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
-    await message.answer("🇺🇿 Tilni tanlang / 🇷🇺 Выберите язык:", reply_markup=lang_kb)
+    await message.answer(
+        "🇺🇿 Tilni tanlang / 🇷🇺 Выберите язык:", 
+        reply_markup=lang_kb
+    )
 
-# 🔹 Tilni tanlash tugmasi
 @dp.message(F.text.in_(["🇺🇿 O'zbekcha", "🇷🇺 Русский"]))
 async def set_language(message: types.Message):
-    user_languages[message.from_user.id] = "ru" if message.text == "🇷🇺 Русский" else "uz"
-    lang = user_languages[message.from_user.id]
-
-    if lang == "ru":
-        await message.answer("✍️ Пожалуйста, напишите вашу жалобу или предложение:", reply_markup=contact_kb)
+    user_id = message.from_user.id
+    
+    if message.text == "🇷🇺 Русский":
+        user_languages[user_id] = "ru"
+        await message.answer(
+            "✍️ Пожалуйста, напишите вашу жалобу или предложение:",
+            reply_markup=contact_kb_ru
+        )
     else:
-        await message.answer("✍️ Iltimos, shikoyatingiz yoki taklifingizni yozing:", reply_markup=contact_kb)
+        user_languages[user_id] = "uz"
+        await message.answer(
+            "✍️ Iltimos, shikoyatingiz yoki taklifingizni yozing:",
+            reply_markup=contact_kb_uz
+        )
 
-# 🔹 Shikoyat yoki taklif qabul qilish
 @dp.message(F.text)
 async def receive_message(message: types.Message):
     user_id = message.from_user.id
@@ -59,7 +76,7 @@ async def receive_message(message: types.Message):
     # Tilni tanlash menyusi xabarlariga javob bermang
     if message.text in ["🇺🇿 O'zbekcha", "🇷🇺 Русский"]:
         return
-    
+        
     # Xabarlarni saqlaymiz
     if user_id in user_messages:
         # Mavjud xabarlarga yangi xabar qo'shish
@@ -102,10 +119,14 @@ async def process_after_delay(user_id, message):
         await bot.send_message(ADMIN_ID, admin_text)
         
         # Foydalanuvchiga javob
-        response_text = "✅ Sizning xabaringiz qabul qilindi. Iltimos, biroz kuting.\n📲 @ganiev_s7 ni kontaktingizga saqlang va kontaktingizni yuboring." if lang == "uz" else \
-                        "✅ Ваше сообщение принято. Пожалуйста, подождите немного.\n📲 Сохраните @ganiev_s7 и отправьте ваш контакт."
-        
-        await bot.send_message(user_id, response_text)
+        if lang == "ru":
+            response_text = "✅ Ваше сообщение принято. Пожалуйста, подождите немного.\n📲 Сохраните @ganiev_s7 и отправьте ваш контакт."
+        else:
+            response_text = "✅ Sizning xabaringiz qabul qilindi. Iltimos, biroz kuting.\n📲 @ganiev_s7 ni kontaktingizga saqlang va kontaktingizni yuboring."
+            
+        # Mos klaviatura tanlash
+        kb = contact_kb_ru if lang == "ru" else contact_kb_uz
+        await bot.send_message(user_id, response_text, reply_markup=kb)
         
         # Ma'lumotlarni tozalash
         if user_id in user_messages:
@@ -117,23 +138,24 @@ async def process_after_delay(user_id, message):
         if user_id in user_waiting_tasks:
             del user_waiting_tasks[user_id]
 
-# 🔹 Kontakt yuborish qabul qilish
 @dp.message(F.contact)
 async def receive_contact(message: types.Message):
     user_id = message.from_user.id
     lang = user_languages.get(user_id, "uz")
-    contact_info = f"📞 Yangi kontakt:\n{message.contact.phone_number}\n👤 {message.from_user.full_name} ({message.from_user.id})"
-
-    # Adminga yuborish
+    
+    contact_info = (
+        f"📞 Yangi kontakt:\n"
+        f"{message.contact.phone_number}\n"
+        f"👤 {message.from_user.full_name} ({message.from_user.id})"
+    )
     await bot.send_message(ADMIN_ID, contact_info)
-
+    
     # Foydalanuvchiga javob va menyuni olib tashlash
     response_text = "✅ Rahmat! Sizning kontaktingiz adminga yuborildi." if lang == "uz" else \
                     "✅ Спасибо! Ваш контакт отправлен администратору."
-
+                    
     await message.answer(response_text, reply_markup=ReplyKeyboardRemove())
 
-# Botni ishga tushirish
 async def main():
     logging.basicConfig(level=logging.INFO)
     logging.info("Bot started")
