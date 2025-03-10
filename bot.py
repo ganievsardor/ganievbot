@@ -11,26 +11,18 @@ from aiogram.types import (
 from aiogram.client.default import DefaultBotProperties
 
 # Tokenlar
-# SECURITY ISSUE: Tokens should be stored as environment variables
-TOKEN = "6367097370:AAHjerMmugPyfJS19n-8TgFVe8ym0fUzA54"  # Should use os.environ.get("BOT_TOKEN")
-# SECURITY ISSUE: This is an organization ID, not an API key
-OPENAI_API_KEY = "org-aCINbcM9pgBWpKKFfCoKgdSs"  # Should use os.environ.get("OPENAI_API_KEY")
-ADMIN_ID = 1951089207  # Admin chat ID
+TOKEN = "6367097370:AAHjerMmugPyfJS19n-8TgFVe8ym0fUzA54"  
+OPENAI_API_KEY = "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"  
+ADMIN_ID = 1951089207  
 
-# OpenAI sozlamalari
 openai.api_key = OPENAI_API_KEY
-
-# Bot yaratamiz
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-
-# Dispatcher yaratamiz
 dp = Dispatcher()
 
-# Foydalanuvchi tillari va xabar vaqtlari uchun lug‘atlar
 user_languages = {}
-user_last_message_time = {}
+user_sent_contact = {}
 
-# Tilni tanlash tugmalari
+# Til tanlash tugmalari
 lang_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🇺🇿 O'zbekcha"), KeyboardButton(text="🇷🇺 Русский")]
@@ -38,19 +30,32 @@ lang_kb = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# Kontakt yuborish tugmasi
-contact_kb_uz = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="📞 Kontaktni yuborish", request_contact=True)]],
-    resize_keyboard=True,
-    one_time_keyboard=True
+# Kontakt yuborish va GanievGPT tugmasi
+def get_contact_keyboard(lang):
+    if lang == "ru":
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="📞 Отправить контакт", request_contact=True)],
+                [KeyboardButton(text="🤖 GanievGPT")]
+            ],
+            resize_keyboard=True
+        )
+    else:
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="📞 Kontaktni yuborish", request_contact=True)],
+                [KeyboardButton(text="🤖 GanievGPT")]
+            ],
+            resize_keyboard=True
+        )
+
+# GanievGPT tugmasi alohida
+ganiev_gpt_kb = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="🤖 GanievGPT")]],
+    resize_keyboard=True
 )
 
-contact_kb_ru = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="📞 Отправить контакт", request_contact=True)]],
-    resize_keyboard=True,
-    one_time_keyboard=True
-)
-
+# /start komandasi
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     await message.answer(
@@ -58,85 +63,76 @@ async def start_cmd(message: types.Message):
         reply_markup=lang_kb
     )
 
+# Tilni tanlash
 @dp.message(F.text.in_(["🇺🇿 O'zbekcha", "🇷🇺 Русский"]))
 async def set_language(message: types.Message):
-    if message.text == "🇷🇺 Русский":
-        user_languages[message.from_user.id] = "ru"
-        await message.answer(
-            "✍️ Пожалуйста, напишите вашу жалобу или предложение:",
-            reply_markup=contact_kb_ru
-        )
-    else:
-        user_languages[message.from_user.id] = "uz"
-        await message.answer(
-            "✍️ Iltimos, shikoyatingiz yoki taklifingizni yozing:",
-            reply_markup=contact_kb_uz
-        )
+    user_languages[message.from_user.id] = "ru" if message.text == "🇷🇺 Русский" else "uz"
+    user_sent_contact[message.from_user.id] = False  # Foydalanuvchi hali kontakt yubormagan
+    lang = user_languages[message.from_user.id]
 
+    text = "✍️ Пожалуйста, напишите вашу жалобу или предложение:" if lang == "ru" else "✍️ Iltimos, shikoyatingiz yoki taklifingizni yozing:"
+    await message.answer(text, reply_markup=get_contact_keyboard(lang))
+
+# Foydalanuvchi shikoyat yoki taklif yozishi
 @dp.message(F.text)
 async def receive_message(message: types.Message):
     user_id = message.from_user.id
     lang = user_languages.get(user_id, "uz")
-    now = asyncio.get_event_loop().time()
 
-    if user_id in user_last_message_time:
-        time_diff = now - user_last_message_time[user_id]
-        if time_diff < 60:
-            # ISSUE: Rate limited users should receive feedback
-            if lang == "ru":
-                await message.answer("⏳ Пожалуйста, подождите минуту перед отправкой нового сообщения.")
-            else:
-                await message.answer("⏳ Iltimos, yangi xabar yuborishdan oldin bir daqiqa kuting.")
-            return
+    if message.text == "🤖 GanievGPT":
+        await message.answer("📝 Savolingizni yozing, men sizga javob beraman.")
+        return
 
-    user_last_message_time[user_id] = now
-
-    admin_text = (
-        f"📩 Yangi xabar:\n"
-        f"👤 {message.from_user.full_name} ({message.from_user.id})\n"
-        f"📝 {message.text}"
-    )
+    admin_text = f"📩 Yangi xabar:\n👤 {message.from_user.full_name} ({message.from_user.id})\n📝 {message.text}"
     await bot.send_message(ADMIN_ID, admin_text)
 
-    response_text = (
-        "✅ Ваша жалоба принята. Пожалуйста, подождите немного.\n"
-        "📲 Сохраните @ganiev_s7 и отправьте ваш контакт."
-    ) if lang == "ru" else (
-        "✅ Sizning shikoyatingiz qabul qilindi. Iltimos, biroz kuting.\n"
-        "📲 @ganiev_s7 ni kontaktingizga saqlang va kontaktingizni yuboring."
-    )
-
+    response_text = "✅ Ваша жалоба принята. Пожалуйста, подождите немного." if lang == "ru" else "✅ Sizning shikoyatingiz qabul qilindi. Iltimos, biroz kuting."
     await message.answer(response_text)
 
+# /GanievGPT komandasi
+@dp.message(Command("GanievGPT"))
+async def ganiev_gpt_cmd(message: types.Message):
+    await message.answer("📝 Savolingizni yozing, men sizga javob beraman.", reply_markup=ganiev_gpt_kb)
+
+# ChatGPT bilan ishlovchi funksiya
+@dp.message(F.text)
+async def chat_with_ganievgpt(message: types.Message):
+    user_id = message.from_user.id
+    lang = user_languages.get(user_id, "uz")
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": message.text}]
+        )
+        answer = response["choices"][0]["message"]["content"]
+    except Exception as e:
+        logging.error(f"OpenAI API xatosi: {e}")
+        answer = "❌ GanievGPT bilan bog‘lanib bo‘lmadi. Iltimos, kuting va qaytadan urinib ko‘ring." if lang == "uz" else "❌ Не удалось подключиться к GanievGPT. Пожалуйста, подождите и попробуйте снова."
+
+    await message.answer(answer)
+
+# Foydalanuvchi kontakt yuborganda
 @dp.message(F.contact)
 async def receive_contact(message: types.Message):
     user_id = message.from_user.id
     lang = user_languages.get(user_id, "uz")
 
-    contact_info = (
-        f"📞 Yangi kontakt:\n"
-        f"{message.contact.phone_number}\n"
-        f"👤 {message.from_user.full_name}"
-    )
+    # Faqat bir marta kontakt yuborish
+    if user_sent_contact.get(user_id, False):
+        return
+
+    user_sent_contact[user_id] = True  # Foydalanuvchi kontakt yubordi
+
+    contact_info = f"📞 Yangi kontakt:\n{message.contact.phone_number}\n👤 {message.from_user.full_name}"
     await bot.send_message(ADMIN_ID, contact_info)
 
     response_text = "✅ Спасибо! Ваш контакт отправлен администратору." if lang == "ru" else "✅ Rahmat! Sizning kontaktingiz adminga yuborildi."
-    await message.answer(response_text, reply_markup=ReplyKeyboardRemove())
+    
+    # Faqat GanievGPT tugmasini qoldiramiz
+    await message.answer(response_text, reply_markup=ganiev_gpt_kb)
 
-# ChatGPT bilan ishlovchi funksiya
-async def ask_chatgpt(prompt):
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response["choices"][0]["message"]["content"]
-
-@dp.message(F.text)
-async def chatgpt_response(message: types.Message):
-    user_message = message.text
-    chatgpt_reply = await ask_chatgpt(user_message)
-    await message.answer(chatgpt_reply)
-
+# Botni ishga tushirish
 async def main():
     logging.basicConfig(level=logging.INFO)
     await dp.start_polling(bot)
