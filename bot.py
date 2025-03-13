@@ -5,19 +5,17 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import (
     ReplyKeyboardMarkup, 
-    KeyboardButton, 
-    ReplyKeyboardRemove
+    KeyboardButton
 )
-from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode  # Aiogram 3.x versiyasi uchun
+from config import API_ID, API_HASH, BOT_TOKEN, OPENAI_API_KEY, ADMIN_ID
 
-# Tokenlar
-TOKEN = "6367097370:AAHjerMmugPyfJS19n-8TgFVe8ym0fUzA54"  
-OPENAI_API_KEY = "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" 
-ADMIN_ID = 1951089207  
-
+# OpenAI API sozlash
 openai.api_key = OPENAI_API_KEY
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-dp = Dispatcher()
+
+# Bot va Dispatcher
+bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher(bot=bot)
 
 user_languages = {}
 user_modes = {}  # Foydalanuvchi rejimi: normal yoki ganiev_gpt
@@ -79,7 +77,7 @@ async def handle_messages(message: types.Message):
         return
 
     if mode == "ganiev_gpt":
-        # Savolni adminstratorga yuborish
+        # Savolni administratorga yuborish
         admin_text = f"🤖 GanievGPT savol:\n👤 {message.from_user.full_name} ({message.from_user.id})\n📝 {message.text}"
         await bot.send_message(ADMIN_ID, admin_text)
 
@@ -89,7 +87,7 @@ async def handle_messages(message: types.Message):
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": message.text}]
             )
-            answer = response["choices"][0]["message"]["content"]
+            answer = response.choices[0].message.content  # TO'G'RILANGAN QISM
         except Exception as e:
             logging.error(f"OpenAI API xatosi: {e}")
             answer = "❌ GanievGPT bilan bog‘lanib bo‘lmadi. Iltimos, qayta urinib ko‘ring."
@@ -110,7 +108,7 @@ async def receive_contact(message: types.Message):
     user_id = message.from_user.id
     lang = user_languages.get(user_id, "uz")
 
-    contact_info = f"📞 Yangi kontakt:\n{message.contact.phone_number}\n👤 {message.from_user.full_name}"
+    contact_info = f"📞 Yangi kontakt:\n📱 {message.contact.phone_number}\n👤 {message.from_user.full_name}"
     await bot.send_message(ADMIN_ID, contact_info)
 
     response_text = "✅ Rahmat! Sizning kontaktingiz adminga yuborildi."
@@ -119,7 +117,7 @@ async def receive_contact(message: types.Message):
 # Botni ishga tushirish
 async def main():
     logging.basicConfig(level=logging.INFO)
-    await dp.start_polling(bot)
+    await dp.start_polling()
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # TO'G'RILANGAN QISM
     asyncio.run(main())
